@@ -49,8 +49,21 @@ def generate_m_sequence(register_state, taps, length=None):
     if length <= 0:
         raise ValueError('length must be positive')
 
-    # TODO: clock the LFSR and map output bits to bipolar chips.
-    raise NotImplementedError('请实现 m 序列生成')
+    # LFSR: 每时钟输出最右位，右移，反馈在左侧插入
+    chips = np.zeros(length, dtype=float)
+    state = state.copy()
+    for i in range(length):
+        # 输出最右位: 0→+1, 1→-1
+        output_bit = state[-1]
+        chips[i] = 1.0 if output_bit == 0 else -1.0
+        # 反馈位 = XOR of tapped bits (1-based taps)
+        feedback = 0
+        for tap in taps:
+            feedback ^= state[tap - 1]
+        # 右移，反馈插入最左
+        state = np.roll(state, 1)
+        state[0] = feedback
+    return chips
 
 
 def dsss_spread(bits, pn_chips):
@@ -65,8 +78,14 @@ def dsss_spread(bits, pn_chips):
     if bits.ndim != 1 or not np.all((bits == 0) | (bits == 1)):
         raise ValueError('bits must be a one-dimensional binary array')
 
-    # TODO: BPSK-map each bit and multiply by the PN chips.
-    raise NotImplementedError('请实现 DSSS 扩频')
+    # BPSK映射: 0→+1, 1→-1, 再与PN码逐片相乘
+    bpsk = 1.0 - 2.0 * bits.astype(float)  # shape: (num_bits,)
+    spreading_factor = len(pn_chips)
+    chips = np.zeros(len(bits) * spreading_factor, dtype=float)
+    for i in range(len(bits)):
+        start = i * spreading_factor
+        chips[start:start + spreading_factor] = bpsk[i] * pn_chips
+    return chips
 
 
 def dsss_despread(received_chips, pn_chips):
@@ -81,8 +100,12 @@ def dsss_despread(received_chips, pn_chips):
     if received_chips.ndim != 1 or len(received_chips) % len(pn_chips) != 0:
         raise ValueError('received_chips length must be a multiple of PN length')
 
-    # TODO: reshape by spreading factor, correlate with PN chips, and decide bits.
-    raise NotImplementedError('请实现 DSSS 解扩')
+    # 按扩频因子reshape，与PN码相关，非负相关→bit 0
+    spreading_factor = len(pn_chips)
+    num_bits = len(received_chips) // spreading_factor
+    matrix = received_chips.reshape(num_bits, spreading_factor)
+    correlations = matrix @ pn_chips / spreading_factor
+    return (correlations < 0).astype(int)
 
 
 def processing_gain_db(spreading_factor):
@@ -90,8 +113,7 @@ def processing_gain_db(spreading_factor):
     if spreading_factor <= 0:
         raise ValueError('spreading_factor must be positive')
 
-    # TODO: compute 10 * log10(N).
-    raise NotImplementedError('请实现处理增益计算')
+    return 10.0 * np.log10(spreading_factor)
 
 
 def despread_with_timing_offset(received_chips, pn_chips, max_offset):
@@ -99,8 +121,24 @@ def despread_with_timing_offset(received_chips, pn_chips, max_offset):
     if max_offset < 0:
         raise ValueError('max_offset must be non-negative')
 
-    # TODO: 选做：请实现同步偏移搜索解扩。
-    raise NotImplementedError('选做：请实现同步偏移搜索')
+    # 在偏移范围内搜索最佳同步位置（最大相关幅度）
+    spreading_factor = len(pn_chips)
+    num_bits = len(received_chips) // spreading_factor
+    best_offset = 0
+    best_total = -np.inf
+    for offset in range(-max_offset, max_offset + 1):
+        shifted = np.roll(received_chips, offset)
+        shifted[:max(0, offset)] = 0
+        shifted[len(shifted) + min(0, offset):] = 0
+        matrix = shifted.reshape(num_bits, spreading_factor)
+        correlations = np.abs(matrix @ pn_chips / spreading_factor)
+        total = np.sum(correlations)
+        if total > best_total:
+            best_total = total
+            best_offset = offset
+    # 用最佳偏移解扩
+    aligned = np.roll(received_chips, best_offset)
+    return dsss_despread(aligned, pn_chips)
 
 
 def _correlation_values(received_chips, pn_chips):

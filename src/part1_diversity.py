@@ -49,8 +49,14 @@ def selection_combining(received, channel):
     """
     received, channel = _validate_branch_arrays(received, channel)
 
-    # TODO: choose the strongest branch per symbol and equalize by h.
-    raise NotImplementedError('请实现选择合并 SC')
+    # 对每个符号选择 |h|² 最大的分支，用该分支的 r/h 作为估计
+    branch_power = np.abs(channel) ** 2  # shape: (num_branches, num_symbols)
+    best_branch = np.argmax(branch_power, axis=0)  # shape: (num_symbols,)
+    combined = np.zeros(received.shape[1], dtype=complex)
+    for sym_idx in range(received.shape[1]):
+        b = best_branch[sym_idx]
+        combined[sym_idx] = received[b, sym_idx] / channel[b, sym_idx]
+    return combined
 
 
 def maximal_ratio_combining(received, channel):
@@ -62,8 +68,11 @@ def maximal_ratio_combining(received, channel):
     """
     received, channel = _validate_branch_arrays(received, channel)
 
-    # TODO: use conjugate channel weights and normalize by total branch power.
-    raise NotImplementedError('请实现最大比合并 MRC')
+    # MRC: 用信道共轭做权重，按总功率归一化
+    weights = np.conj(channel)  # shape: (num_branches, num_symbols)
+    numerator = np.sum(weights * received, axis=0)
+    denominator = np.sum(np.abs(channel) ** 2, axis=0)
+    return numerator / denominator
 
 
 def simulate_diversity_ber(snr_db_values, num_bits=4000, num_branches=2, seed=2026):
@@ -79,17 +88,44 @@ def simulate_diversity_ber(snr_db_values, num_bits=4000, num_branches=2, seed=20
     if num_bits <= 0 or num_branches < 2:
         raise ValueError('num_bits must be positive and num_branches must be at least 2')
 
-    # TODO: generate BPSK bits, simulate Rayleigh branches at each SNR,
-    # compare single-branch equalization, SC and MRC BER.
-    raise NotImplementedError('请实现分集 BER 仿真')
+    rng = np.random.default_rng(seed)
+    bits = generate_bits(num_bits, seed=seed)
+    symbols = bpsk_modulate(bits)
+
+    ber_single = []
+    ber_sc = []
+    ber_mrc = []
+
+    for snr_db in snr_db_values:
+        # 生成多分支瑞利衰落信号
+        received, channel = rayleigh_fading_branches(
+            symbols, num_branches, snr_db, seed=rng.integers(0, 2**31)
+        )
+
+        # 单分支：直接用第一个分支（等化）
+        single_eq = received[0] / channel[0]
+        ber_single.append(calculate_ber(bits, bpsk_demodulate(single_eq)))
+
+        # SC
+        sc_out = selection_combining(received, channel)
+        ber_sc.append(calculate_ber(bits, bpsk_demodulate(sc_out)))
+
+        # MRC
+        mrc_out = maximal_ratio_combining(received, channel)
+        ber_mrc.append(calculate_ber(bits, bpsk_demodulate(mrc_out)))
+
+    return {'单分支': ber_single, 'SC': ber_sc, 'MRC': ber_mrc}
 
 
 def equal_gain_combining(received, channel):
     """Optional: equal-gain combining with phase-only correction."""
     received, channel = _validate_branch_arrays(received, channel)
 
-    # TODO: 选做：请实现等增益合并 EGC。
-    raise NotImplementedError('选做：请实现等增益合并 EGC')
+    # EGC: 只做相位校正（除以 |h|），等权重合并，按总幅度归一化
+    phase_corrected = received * np.conj(channel) / (np.abs(channel) + 1e-30)
+    numerator = np.sum(phase_corrected, axis=0)
+    denominator = np.sum(np.abs(channel), axis=0)
+    return numerator / denominator
 
 
 def run_diversity_demo():
