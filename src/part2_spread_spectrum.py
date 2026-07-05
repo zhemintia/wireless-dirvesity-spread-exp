@@ -136,8 +136,12 @@ def despread_with_timing_offset(received_chips, pn_chips, max_offset):
         if total > best_total:
             best_total = total
             best_offset = offset
-    # 用最佳偏移解扩
+    # 用最佳偏移对齐并清零滚绕部分后解扩
     aligned = np.roll(received_chips, best_offset)
+    if best_offset > 0:
+        aligned[:best_offset] = 0
+    elif best_offset < 0:
+        aligned[best_offset:] = 0
     return dsss_despread(aligned, pn_chips)
 
 
